@@ -31,13 +31,27 @@ async def get_msg(userbot, client, bot, sender, edit_id, msg_link, i):
     round_message = False
     if "?single" in msg_link:
         msg_link = msg_link.split("?single")[0]
-    msg_id = int(msg_link.split("/")[-1]) + int(i)
+    # Remove query parameters if any
+    if '?' in msg_link:
+        msg_link = msg_link.split('?')[0]
+    parts = msg_link.split("/")
+    msg_id = int(parts[-1]) + int(i)
     height, width, duration, thumb_path = 90, 90, 0, None
-    if 't.me/c/' or 't.me/b/' in msg_link:
+    if 't.me/c/' in msg_link or 't.me/b/' in msg_link:
         if 't.me/b/' in msg_link:
-            chat = str(msg_link.split("/")[-2])
+            chat = str(parts[-2])
         else:
-            chat = int('-100' + str(msg_link.split("/")[-2]))
+            # Handle forum topics: t.me/c/chat_id/topic_id/message_id
+            # Regular channels: t.me/c/chat_id/message_id
+            # Check if it's a forum topic (has 4 parts after 'c')
+            c_index = parts.index('c')
+            if len(parts) > c_index + 3:
+                # Forum topic format: chat_id is at index c_index + 1
+                chat_id_str = parts[c_index + 1]
+            else:
+                # Regular channel format: chat_id is at index c_index + 1
+                chat_id_str = parts[c_index + 1]
+            chat = int('-100' + str(chat_id_str))
         file = ""
         try:
             # Try to access the chat first to populate Pyrogram's peer cache
