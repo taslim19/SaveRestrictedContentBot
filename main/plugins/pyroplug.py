@@ -40,6 +40,11 @@ async def get_msg(userbot, client, bot, sender, edit_id, msg_link, i):
             chat = int('-100' + str(msg_link.split("/")[-2]))
         file = ""
         try:
+            # Try to access the chat first to populate Pyrogram's peer cache
+            try:
+                await userbot.get_chat(chat)
+            except Exception:
+                pass  # Continue even if get_chat fails, get_messages might still work
             msg = await userbot.get_messages(chat, msg_id)
             if msg.media:
                 if msg.media==MessageMediaType.WEB_PAGE:
@@ -142,8 +147,25 @@ async def get_msg(userbot, client, bot, sender, edit_id, msg_link, i):
             except Exception:
                 pass
             await edit.delete()
-        except (ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid):
-            await client.edit_message_text(sender, edit_id, "Have you joined the channel?")
+        except ChannelBanned as e:
+            print(f"ChannelBanned error: {e}, chat: {chat}, msg_id: {msg_id}")
+            await client.edit_message_text(sender, edit_id, "❌ Channel is banned or deleted. Cannot access messages.")
+            return
+        except ChannelPrivate as e:
+            print(f"ChannelPrivate error: {e}, chat: {chat}, msg_id: {msg_id}")
+            await client.edit_message_text(sender, edit_id, "❌ Channel is private. Please make sure:\n1. The userbot account has joined the channel/group\n2. The account has permission to view messages\n3. For restricted channels, the account must be a member")
+            return
+        except ChannelInvalid as e:
+            print(f"ChannelInvalid error: {e}, chat: {chat}, msg_id: {msg_id}")
+            await client.edit_message_text(sender, edit_id, "❌ Invalid channel. The channel may not exist or the link is incorrect.")
+            return
+        except ChatIdInvalid as e:
+            print(f"ChatIdInvalid error: {e}, chat: {chat}, msg_id: {msg_id}")
+            await client.edit_message_text(sender, edit_id, "❌ Invalid chat ID. Please check the message link format.")
+            return
+        except ChatInvalid as e:
+            print(f"ChatInvalid error: {e}, chat: {chat}, msg_id: {msg_id}")
+            await client.edit_message_text(sender, edit_id, "❌ Invalid chat. The chat may not exist or you don't have access.")
             return
         except PeerIdInvalid:
             chat = msg_link.split("/")[-3]

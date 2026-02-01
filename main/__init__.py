@@ -11,6 +11,22 @@ import logging, time, sys
 logging.basicConfig(format='[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s',
                     level=logging.WARNING)
 
+# Filter out peer ID invalid errors from Pyrogram dispatcher
+class PeerIdErrorFilter(logging.Filter):
+    def filter(self, record):
+        # Suppress "Peer id invalid" errors - these happen when bot receives updates about channels it hasn't accessed
+        if "Peer id invalid" in str(record.getMessage()):
+            return False
+        return True
+
+# Apply filter to Pyrogram logger
+pyrogram_logger = logging.getLogger("pyrogram")
+pyrogram_logger.addFilter(PeerIdErrorFilter())
+
+# Also filter asyncio errors
+asyncio_logger = logging.getLogger("asyncio")
+asyncio_logger.addFilter(PeerIdErrorFilter())
+
 # variables
 API_ID = config("API_ID", default=None, cast=int)
 API_HASH = config("API_HASH", default=None)
