@@ -6,6 +6,11 @@ from main.plugins.helpers import get_link
 
 from telethon import events, Button
 from pyrogram.errors import FloodWait, ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid, PeerIdInvalid
+from pyrogram.enums import MessageMediaType
+import os, time
+from main.plugins.progress import progress_for_pyrogram
+from main.plugins.helpers import screenshot
+from ethon.pyfunc import video_metadata
 
 # Store default destination channels per user (user_id -> channel_id/username)
 default_channels = {}
@@ -200,16 +205,18 @@ async def forward_command(event):
                 await edit.edit(f"❌ Cannot access destination channel {channel}. Error: {str(e)}")
                 return
             
-            await edit.edit("Forwarding message to channel...")
+            await edit.edit("Copying message to channel (without forward attribution)...")
             
-            # Forward the message to the channel using userbot
+            # Copy the message instead of forwarding to hide sender name
+            # copy_message sends the message as if it was sent by the bot, hiding forward info
             # Use the resolved channel ID
-            print(f"Forwarding message {msg_id} from {chat_id} to {dest_chat_id}")
-            forwarded = await userbot.forward_messages(dest_chat_id, chat_id, msg_id)
+            print(f"Copying message {msg_id} from {chat_id} to {dest_chat_id}")
             
-            print(f"Forward successful. Forwarded message IDs: {forwarded}")
+            copied = await userbot.copy_message(dest_chat_id, chat_id, msg_id)
             
-            await edit.edit(f"✅ Successfully forwarded message to {channel}!")
+            print(f"Copy successful. Message copied to {dest_chat_id}, message ID: {copied.id}")
+            
+            await edit.edit(f"✅ Successfully copied message to {channel} (without forward attribution)!")
             
         except (ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid) as e:
             if "source" in str(e).lower() or chat_id in str(e):
