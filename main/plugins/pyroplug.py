@@ -55,11 +55,30 @@ async def get_msg(userbot, client, bot, sender, edit_id, msg_link, i):
         file = ""
         try:
             # Try to access the chat first to populate Pyrogram's peer cache
+            # This is especially important for forum topics and channels the bot hasn't accessed yet
             try:
-                await userbot.get_chat(chat)
-            except Exception:
-                pass  # Continue even if get_chat fails, get_messages might still work
-            msg = await userbot.get_messages(chat, msg_id)
+                chat_obj = await userbot.get_chat(chat)
+                print(f"Successfully accessed chat: {chat_obj.title if hasattr(chat_obj, 'title') else chat}")
+            except ValueError as ve:
+                if "Peer id invalid" in str(ve):
+                    print(f"Peer ID not in cache for chat {chat}. Userbot may need to join/access the channel first.")
+                    # Try to get messages anyway - sometimes it works even if get_chat fails
+                else:
+                    raise
+            except Exception as e:
+                print(f"Warning: Could not access chat {chat} to populate cache: {e}")
+                # For forum topics, we might need to try accessing with the topic ID
+                # But first, let's try get_messages which might work even if get_chat fails
+            
+            # Try to get the message
+            try:
+                msg = await userbot.get_messages(chat, msg_id)
+            except ValueError as ve:
+                if "Peer id invalid" in str(ve):
+                    # Re-raise as a more specific error that we can catch later
+                    raise ValueError(f"Peer id invalid: {chat}. The userbot account needs to join/access this channel/group first.")
+                else:
+                    raise
             if msg.media:
                 if msg.media==MessageMediaType.WEB_PAGE:
                     edit = await client.edit_message_text(sender, edit_id, "Cloning.")
@@ -181,6 +200,14 @@ async def get_msg(userbot, client, bot, sender, edit_id, msg_link, i):
             print(f"ChatInvalid error: {e}, chat: {chat}, msg_id: {msg_id}")
             await client.edit_message_text(sender, edit_id, "❌ Invalid chat. The chat may not exist or you don't have access.")
             return
+        except ValueError as e:
+            if "Peer id invalid" in str(e):
+                print(f"PeerIdInvalid ValueError: {e}, chat: {chat}, msg_id: {msg_id}")
+                await client.edit_message_text(sender, edit_id, f"❌ Cannot resolve chat ID. This usually means:\n1. The userbot account hasn't joined/accessed this channel/group yet\n2. The channel/group doesn't exist or is inaccessible\n3. For forum topics, make sure the userbot has access to the group\n\nTry joining the channel/group with the userbot account first, then try again.")
+                return
+            else:
+                # Re-raise if it's a different ValueError
+                raise
         except PeerIdInvalid:
             chat = msg_link.split("/")[-3]
             try:
