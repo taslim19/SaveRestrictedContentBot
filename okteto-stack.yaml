@@ -7,7 +7,6 @@ services:
       BOT_TOKEN: $BOT_TOKEN 
       SESSION: $SESSION
       AUTH: $AUTH
-      FORCESUB: $FORCESUB
     ports:
       - 8080
     resources:

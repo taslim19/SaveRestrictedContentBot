@@ -10,10 +10,10 @@ A stable telegram bot to get restricted messages with custom thumbnail support ,
 - Custom thumbnail support for Pvt medias
 - supports text and webpage media messages
 - Faster speed
-- Forcesubscribe available
 - To save from bots send link in this format : `t.me/b/bot_username/message_id` (use plus messenger for message_id)
 - `/batch` - (For owner only) Use this command to save upto 100 files from a pvt or public restricted channel at once.
 - `/cancel` -  Use this to stop batch
+- `/forward` - (For owner only) Forward a restricted message from group topic/forum to a channel
 - Time delay is added to avoid FloodWait and keep user account safe. 
   
 # Variables
@@ -22,8 +22,7 @@ A stable telegram bot to get restricted messages with custom thumbnail support ,
 - `API_HASH`
 - `SESSION`
 - `BOT_TOKEN` 
-- `AUTH` - Owner user id
-- `FORCESUB` - Public channel username without '@'. Don't forget to add bot in channel as administrator. 
+- `AUTH` - Owner user id 
 
 # Get API & PYROGRAM string session from:
  
