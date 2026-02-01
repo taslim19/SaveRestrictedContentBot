@@ -37,16 +37,68 @@ async def set_channel_command(event):
             
             # Verify the channel exists and is accessible
             try:
-                dest_chat = await userbot.get_chat(channel)
-                # Store the resolved channel ID
-                default_channels[event.sender_id] = dest_chat.id
-                await conv.send_message(f"✅ Default destination channel set to: {dest_chat.title if hasattr(dest_chat, 'title') else channel}\n(ID: {dest_chat.id})")
+                # Try to get the channel - this will populate Pyrogram's cache
+                dest_chat = None
+                try:
+                    dest_chat = await userbot.get_chat(channel)
+                except (ChannelInvalid, ValueError) as e:
+                    # If channel ID format might be wrong, try alternative
+                    if isinstance(channel, int) and channel > 0:
+                        # Try with -100 prefix for supergroups/channels
+                        alt_channel = int('-100' + str(channel))
+                        try:
+                            dest_chat = await userbot.get_chat(alt_channel)
+                            channel = alt_channel  # Update channel variable
+                        except Exception:
+                            # Try to access channel via get_chat_history to populate cache
+                            try:
+                                async for msg in userbot.get_chat_history(channel, limit=1):
+                                    pass  # Just to populate cache
+                                dest_chat = await userbot.get_chat(channel)
+                            except Exception:
+                                # Last resort: try with username if it was a number
+                                raise e  # Re-raise original error
+                    else:
+                        raise e
+                
+                if dest_chat:
+                    # Store the resolved channel ID
+                    default_channels[event.sender_id] = dest_chat.id
+                    await conv.send_message(f"✅ Default destination channel set to: {dest_chat.title if hasattr(dest_chat, 'title') else channel}\n(ID: {dest_chat.id})")
+                else:
+                    raise Exception("Failed to resolve channel")
+            except ChannelInvalid:
+                # If channel ID is invalid, try alternative formats
+                if isinstance(channel, int):
+                    # Try with -100 prefix if it's a positive number
+                    if channel > 0:
+                        try:
+                            alt_channel = int('-100' + str(channel))
+                            dest_chat = await userbot.get_chat(alt_channel)
+                            default_channels[event.sender_id] = dest_chat.id
+                            await conv.send_message(f"✅ Default destination channel set to: {dest_chat.title if hasattr(dest_chat, 'title') else alt_channel}\n(ID: {dest_chat.id})")
+                        except Exception:
+                            await conv.send_message(f"❌ Cannot access channel {channel}. Try using the channel username (e.g., @channelname) instead of ID, or make sure the userbot has joined the channel.")
+                            return conv.cancel()
+                    else:
+                        await conv.send_message(f"❌ Invalid channel ID: {channel}. Try using the channel username (e.g., @channelname) instead.")
+                        return conv.cancel()
+                else:
+                    await conv.send_message(f"❌ Cannot access channel '{channel}'. Make sure:\n1. The channel username is correct (without @)\n2. The userbot has joined the channel\n3. Try using the full channel ID format: -1001234567890")
+                    return conv.cancel()
+            except (ChannelPrivate, ChannelBanned):
+                await conv.send_message(f"❌ Cannot access channel. The channel is private/banned or the userbot hasn't joined it. Please make sure the userbot account has joined the channel.")
+                return conv.cancel()
             except Exception as e:
-                await conv.send_message(f"❌ Cannot access channel. Error: {str(e)}\nMake sure the userbot has joined the channel.")
+                error_msg = str(e)
+                if "CHANNEL_INVALID" in error_msg or "ChannelInvalid" in error_msg:
+                    await conv.send_message(f"❌ Invalid channel. Try:\n1. Using channel username: @channelname (without @)\n2. Using full channel ID: -1001234567890\n3. Make sure userbot has joined the channel")
+                else:
+                    await conv.send_message(f"❌ Cannot access channel. Error: {error_msg}\nMake sure the userbot has joined the channel.")
                 return conv.cancel()
         except Exception as e:
             print(e)
-            await conv.send_message("Cannot wait more longer for your response!")
+            await conv.send_message("⏱️ Error occurred. Please try again.")
             return conv.cancel()
         
         conv.cancel()
@@ -74,7 +126,7 @@ async def forward_all_command(event):
                 return conv.cancel()
         except Exception as e:
             print(e)
-            await conv.send_message("Cannot wait more longer for your response!")
+            await conv.send_message("⏱️ No response received. The conversation will wait for your response.")
             return conv.cancel()
         
         # Ask for channel only if no default is set
@@ -92,9 +144,12 @@ async def forward_all_command(event):
                 else:
                     channel = channel_input
                     print(f"Channel username provided: {channel}")
+            except asyncio.TimeoutError:
+                await conv.send_message("⏱️ No response received. The conversation will wait for your response.")
+                return conv.cancel()
             except Exception as e:
                 print(e)
-                await conv.send_message("Cannot wait more longer for your response!")
+                await conv.send_message("⏱️ Error occurred. Please try again.")
                 return conv.cancel()
         else:
             channel = default_channel
@@ -110,6 +165,7 @@ async def forward_all_command(event):
                     else:
                         channel = channel_input
             except Exception:
+                # No reply or error - use default channel
                 pass
         
         conv.cancel()
@@ -179,8 +235,33 @@ async def forward_all_command(event):
                 if dest_chat.type.name not in ['CHANNEL', 'SUPERGROUP', 'GROUP']:
                     await edit.edit(f"❌ Destination must be a channel or group, not a {dest_chat.type.name.lower()}.")
                     return
+        except ChannelInvalid:
+            # If channel ID is invalid, try alternative formats
+            if isinstance(channel, int):
+                if channel > 0:
+                    try:
+                        alt_channel = int('-100' + str(channel))
+                        dest_chat = await userbot.get_chat(alt_channel)
+                        dest_chat_id = dest_chat.id
+                        print(f"Resolved channel using alternative format: {dest_chat_id}")
+                    except Exception:
+                        await edit.edit(f"❌ Invalid channel ID: {channel}. Try using the channel username (e.g., @channelname) instead, or make sure the userbot has joined the channel.")
+                        return
+                else:
+                    await edit.edit(f"❌ Invalid channel ID: {channel}. Try using the channel username (e.g., @channelname) instead.")
+                    return
+            else:
+                await edit.edit(f"❌ Cannot access channel '{channel}'. Make sure:\n1. The channel username is correct\n2. The userbot has joined the channel\n3. Try using the full channel ID: -1001234567890")
+                return
+        except (ChannelPrivate, ChannelBanned):
+            await edit.edit(f"❌ Cannot access destination channel. The channel is private/banned or the userbot hasn't joined it. Please make sure the userbot account has joined the channel.")
+            return
         except Exception as e:
-            await edit.edit(f"❌ Cannot access destination channel {channel}. Error: {str(e)}")
+            error_msg = str(e)
+            if "CHANNEL_INVALID" in error_msg or "ChannelInvalid" in error_msg:
+                await edit.edit(f"❌ Invalid channel. Try:\n1. Using channel username: @channelname (without @)\n2. Using full channel ID: -1001234567890\n3. Make sure userbot has joined the channel")
+            else:
+                await edit.edit(f"❌ Cannot access destination channel {channel}. Error: {error_msg}")
             return
         
         # Copy all messages
@@ -243,7 +324,7 @@ async def forward_command(event):
                 return conv.cancel()
         except Exception as e:
             print(e)
-            await conv.send_message("Cannot wait more longer for your response!")
+            await conv.send_message("⏱️ No response received. The conversation will wait for your response.")
             return conv.cancel()
         
         # Ask for channel only if no default is set
@@ -262,9 +343,12 @@ async def forward_command(event):
                 else:
                     channel = channel_input
                     print(f"Channel username provided: {channel}")
+            except asyncio.TimeoutError:
+                await conv.send_message("⏱️ No response received. The conversation will wait for your response.")
+                return conv.cancel()
             except Exception as e:
                 print(e)
-                await conv.send_message("Cannot wait more longer for your response!")
+                await conv.send_message("⏱️ Error occurred. Please try again.")
                 return conv.cancel()
         else:
             # Use default channel
@@ -366,6 +450,27 @@ async def forward_command(event):
                     if dest_chat.type.name not in ['CHANNEL', 'SUPERGROUP', 'GROUP']:
                         await edit.edit(f"❌ Destination must be a channel or group, not a {dest_chat.type.name.lower()}.")
                         return
+            except ChannelInvalid:
+                # If channel ID is invalid, try alternative formats
+                if isinstance(channel, int):
+                    if channel > 0:
+                        try:
+                            alt_channel = int('-100' + str(channel))
+                            dest_chat = await userbot.get_chat(alt_channel)
+                            dest_chat_id = dest_chat.id
+                            print(f"Resolved channel using alternative format: {dest_chat_id}")
+                        except Exception:
+                            await edit.edit(f"❌ Invalid channel ID: {channel}. Try using the channel username (e.g., @channelname) instead, or make sure the userbot has joined the channel.")
+                            return
+                    else:
+                        await edit.edit(f"❌ Invalid channel ID: {channel}. Try using the channel username (e.g., @channelname) instead.")
+                        return
+                else:
+                    await edit.edit(f"❌ Cannot access channel '{channel}'. Make sure:\n1. The channel username is correct\n2. The userbot has joined the channel\n3. Try using the full channel ID: -1001234567890")
+                    return
+            except (ChannelPrivate, ChannelBanned):
+                await edit.edit(f"❌ Cannot access destination channel. The channel is private/banned or the userbot hasn't joined it. Please make sure the userbot account has joined the channel.")
+                return
             except ValueError as ve:
                 if "Peer id invalid" in str(ve):
                     await edit.edit(f"❌ Cannot access destination channel {channel}. Make sure the userbot has joined the channel and has permission to send messages.")
@@ -373,8 +478,12 @@ async def forward_command(event):
                 else:
                     raise
             except Exception as e:
+                error_msg = str(e)
                 print(f"Error accessing destination channel: {e}")
-                await edit.edit(f"❌ Cannot access destination channel {channel}. Error: {str(e)}")
+                if "CHANNEL_INVALID" in error_msg or "ChannelInvalid" in error_msg:
+                    await edit.edit(f"❌ Invalid channel. Try:\n1. Using channel username: @channelname (without @)\n2. Using full channel ID: -1001234567890\n3. Make sure userbot has joined the channel")
+                else:
+                    await edit.edit(f"❌ Cannot access destination channel {channel}. Error: {error_msg}")
                 return
             
             await edit.edit("Copying message to channel (without forward attribution)...")
