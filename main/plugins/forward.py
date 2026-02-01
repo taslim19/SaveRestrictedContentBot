@@ -7,7 +7,7 @@ from main.plugins.helpers import get_link
 from telethon import events, Button
 from pyrogram.errors import FloodWait, ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid, PeerIdInvalid
 from pyrogram.enums import MessageMediaType
-import os, time
+import os, time, asyncio
 from main.plugins.progress import progress_for_pyrogram
 from main.plugins.helpers import screenshot
 from ethon.pyfunc import video_metadata
@@ -51,8 +51,178 @@ async def set_channel_command(event):
         
         conv.cancel()
 
+@Drone.on(events.NewMessage(incoming=True, from_users=AUTH, pattern='/forwardall'))
+async def forward_all_command(event):
+    """Forward all messages from a forum topic"""
+    if not event.is_private:
+        return
+    
+    # Check if user has a default channel set
+    default_channel = default_channels.get(event.sender_id)
+    
+    async with Drone.conversation(event.chat_id) as conv:
+        await conv.send_message("Send me the forum topic link (e.g., t.me/c/chat_id/topic_id/message_id) to forward ALL messages from that topic.", buttons=Button.force_reply())
+        try:
+            link_msg = await conv.get_reply()
+            try:
+                msg_link = get_link(link_msg.text)
+                if not msg_link:
+                    await conv.send_message("No valid link found.")
+                    return conv.cancel()
+            except Exception:
+                await conv.send_message("No link found.")
+                return conv.cancel()
+        except Exception as e:
+            print(e)
+            await conv.send_message("Cannot wait more longer for your response!")
+            return conv.cancel()
+        
+        # Ask for channel only if no default is set
+        if default_channel is None:
+            await conv.send_message("Send me the channel:\n• Username: @channelname\n• Channel ID: -1001234567890\n• Or just the numeric ID: 1234567890\n\nReply with the channel username or ID. (Or use /channel to set a default)", buttons=Button.force_reply())
+            try:
+                channel_msg = await conv.get_reply()
+                channel_input = channel_msg.text.strip()
+                
+                if channel_input.startswith('@'):
+                    channel = channel_input[1:]
+                elif channel_input.lstrip('-').isdigit():
+                    channel = int(channel_input)
+                    print(f"Channel ID provided: {channel}")
+                else:
+                    channel = channel_input
+                    print(f"Channel username provided: {channel}")
+            except Exception as e:
+                print(e)
+                await conv.send_message("Cannot wait more longer for your response!")
+                return conv.cancel()
+        else:
+            channel = default_channel
+            await conv.send_message(f"Using default destination channel (ID: {default_channel}).\nSend a different channel to override, or send 'ok' to continue...", buttons=Button.force_reply())
+            try:
+                reply = await conv.get_reply()
+                if reply and reply.text.strip().lower() not in ['ok', 'skip', 'continue', '']:
+                    channel_input = reply.text.strip()
+                    if channel_input.startswith('@'):
+                        channel = channel_input[1:]
+                    elif channel_input.lstrip('-').isdigit():
+                        channel = int(channel_input)
+                    else:
+                        channel = channel_input
+            except Exception:
+                pass
+        
+        conv.cancel()
+    
+    # Process the forward all command
+    edit = await event.reply("Processing...")
+    
+    try:
+        # Parse the forum topic link
+        if 't.me/c/' not in msg_link:
+            await edit.edit("❌ This command only works with forum topic links (t.me/c/chat_id/topic_id/message_id)")
+            return
+        
+        if '?' in msg_link:
+            msg_link = msg_link.split('?')[0]
+        parts = msg_link.split('/')
+        c_index = parts.index('c')
+        
+        if len(parts) <= c_index + 3:
+            await edit.edit("❌ This doesn't appear to be a forum topic link. Use /forward for single messages.")
+            return
+        
+        chat_id_str = parts[c_index + 1]
+        topic_id = int(parts[c_index + 2])
+        chat_id = int('-100' + str(chat_id_str))
+        
+        await edit.edit(f"Fetching all messages from topic {topic_id}...")
+        
+        # Get all messages from the forum topic
+        messages = []
+        message_count = 0
+        
+        async for message in userbot.get_chat_history(chat_id, limit=None):
+            message_count += 1
+            belongs_to_topic = False
+            
+            # Check if message belongs to the topic
+            if hasattr(message, 'reply_to_message') and message.reply_to_message:
+                if hasattr(message.reply_to_message, 'forum_topic') and message.reply_to_message.forum_topic:
+                    if message.reply_to_message.forum_topic.id == topic_id:
+                        belongs_to_topic = True
+            
+            if not belongs_to_topic and hasattr(message, 'forum_topic_created'):
+                if message.id <= 10000:  # Topic header messages are usually low IDs
+                    belongs_to_topic = True
+            
+            if belongs_to_topic:
+                messages.append(message)
+            
+            if message_count % 50 == 0:
+                await edit.edit(f"Scanning messages... Found {len(messages)} messages in topic {topic_id} so far...")
+        
+        messages.reverse()
+        
+        if not messages:
+            await edit.edit(f"❌ No messages found in topic {topic_id}. Make sure the topic exists and you have access.")
+            return
+        
+        await edit.edit(f"Found {len(messages)} messages in topic {topic_id}. Verifying destination channel...")
+        
+        # Verify destination channel
+        dest_chat_id = channel
+        try:
+            dest_chat = await userbot.get_chat(channel)
+            dest_chat_id = dest_chat.id
+            if hasattr(dest_chat, 'type'):
+                if dest_chat.type.name not in ['CHANNEL', 'SUPERGROUP', 'GROUP']:
+                    await edit.edit(f"❌ Destination must be a channel or group, not a {dest_chat.type.name.lower()}.")
+                    return
+        except Exception as e:
+            await edit.edit(f"❌ Cannot access destination channel {channel}. Error: {str(e)}")
+            return
+        
+        # Copy all messages
+        await edit.edit(f"Copying {len(messages)} message(s) to channel (without forward attribution)...")
+        copied_count = 0
+        failed_count = 0
+        
+        for idx, msg in enumerate(messages, 1):
+            try:
+                if idx % 10 == 0 or idx == len(messages):
+                    await edit.edit(f"Copying message {idx}/{len(messages)} to channel...")
+                copied = await userbot.copy_message(dest_chat_id, chat_id, msg.id)
+                copied_count += 1
+                
+                if idx < len(messages):
+                    await asyncio.sleep(1)
+            except FloodWait as fw:
+                await edit.edit(f"⏳ FloodWait: Waiting {fw.x} seconds before continuing...")
+                await asyncio.sleep(fw.x)
+                try:
+                    copied = await userbot.copy_message(dest_chat_id, chat_id, msg.id)
+                    copied_count += 1
+                except Exception as e:
+                    print(f"Failed to copy message {msg.id}: {e}")
+                    failed_count += 1
+            except Exception as e:
+                print(f"Failed to copy message {msg.id}: {e}")
+                failed_count += 1
+        
+        success_msg = f"✅ Successfully copied {copied_count} message(s) from topic {topic_id} to {channel}!"
+        if failed_count > 0:
+            success_msg += f"\n⚠️ {failed_count} message(s) failed to copy."
+        
+        await edit.edit(success_msg)
+        
+    except Exception as e:
+        print(f"Forward all error: {e}")
+        await edit.edit(f"❌ Error: {str(e)}")
+
 @Drone.on(events.NewMessage(incoming=True, from_users=AUTH, pattern='/forward'))
 async def forward_command(event):
+    """Forward a single message"""
     if not event.is_private:
         return
     
@@ -124,7 +294,7 @@ async def forward_command(event):
     try:
         # Handle different link formats
         # Format: t.me/c/chat_id/message_id or t.me/username/message_id
-        # For forum topics: t.me/c/chat_id/topic_id/message_id
+        # For forum topics: t.me/c/chat_id/topic_id/message_id (but we only forward the single message)
         if 't.me/c/' in msg_link:
             # Remove query parameters if any
             if '?' in msg_link:
@@ -137,9 +307,9 @@ async def forward_command(event):
             # Check if it's a forum topic format (has 4 parts after 'c')
             if len(parts) > c_index + 3:
                 # Forum topic format: t.me/c/chat_id/topic_id/message_id
+                # For /forward, we only forward the single specified message
                 try:
-                    # Try to parse as forum topic
-                    int(parts[c_index + 2])  # topic_id
+                    int(parts[c_index + 2])  # topic_id (we don't need it for single message)
                     msg_id = int(parts[c_index + 3])
                 except (ValueError, IndexError):
                     # Regular channel format: t.me/c/chat_id/message_id
@@ -168,13 +338,15 @@ async def forward_command(event):
         
         await edit.edit("Fetching message...")
         
-        # Get the message using userbot
+        # Get the single message using userbot
         try:
             msg = await userbot.get_messages(chat_id, msg_id)
             
             if not msg or msg.empty:
                 await edit.edit("Message not found. Make sure the link is correct and you have access to the message.")
                 return
+            
+            messages = [msg]  # Single message
             
             await edit.edit("Verifying destination channel...")
             
@@ -207,7 +379,7 @@ async def forward_command(event):
             
             await edit.edit("Copying message to channel (without forward attribution)...")
             
-            # Copy the message instead of forwarding to hide sender name
+            # Copy the single message instead of forwarding to hide sender name
             # copy_message sends the message as if it was sent by the bot, hiding forward info
             # Use the resolved channel ID
             print(f"Copying message {msg_id} from {chat_id} to {dest_chat_id}")
