@@ -22,7 +22,8 @@ A stable telegram bot to get restricted messages with custom thumbnail support ,
 - `API_HASH`
 - `SESSION`
 - `BOT_TOKEN` 
-- `AUTH` - Owner user id 
+- `AUTH` - Owner user id
+- `PRELOAD_CHATS` - (Optional) Comma-separated list of channel/group IDs or usernames to pre-populate peer cache on startup. This prevents "peer id invalid" errors after bot restarts. Example: `-1001234567890,@channelname,1234567890` 
 
 # Get API & PYROGRAM string session from:
  

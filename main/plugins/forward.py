@@ -194,66 +194,126 @@ async def forward_all_command(event):
         
         await edit.edit(f"Fetching all messages from topic {topic_id}...")
         
-        # First, get a reference message from the topic to find the topic header
+        # Get a reference message from the topic
         reference_msg_id = int(parts[c_index + 3])  # Message ID from the link
         topic_header_id = None
+        reference_msg = None
         
         try:
-            # Get the reference message to find the topic header
+            # Get the reference message
             reference_msg = await userbot.get_messages(chat_id, reference_msg_id)
-            print(f"Reference message ID: {reference_msg_id}, has reply_to_top_id: {hasattr(reference_msg, 'reply_to_top_id')}")
+            print(f"Reference message ID: {reference_msg_id}")
+            print(f"Message attributes: reply_to_top_id={getattr(reference_msg, 'reply_to_top_id', None)}, reply_to_message={getattr(reference_msg, 'reply_to_message', None)}")
             
-            # Find the topic header message ID
+            # Try multiple methods to find the topic header
+            # Method 1: Check reply_to_top_id
             if hasattr(reference_msg, 'reply_to_top_id') and reference_msg.reply_to_top_id:
-                # reply_to_top_id points to the topic header message
                 topic_header_id = reference_msg.reply_to_top_id
-                print(f"Found topic header ID via reply_to_top_id: {topic_header_id}")
+                print(f"Found topic header via reply_to_top_id: {topic_header_id}")
+            # Method 2: Check if it replies to a message with forum_topic_created
             elif hasattr(reference_msg, 'reply_to_message') and reference_msg.reply_to_message:
-                # Check if it replies to the topic header
-                if hasattr(reference_msg.reply_to_message, 'forum_topic_created'):
-                    topic_header_id = reference_msg.reply_to_message.id
-                    print(f"Found topic header ID via reply_to_message: {topic_header_id}")
+                reply_to = reference_msg.reply_to_message
+                if hasattr(reply_to, 'forum_topic_created'):
+                    topic_header_id = reply_to.id
+                    print(f"Found topic header via reply_to_message (forum_topic_created): {topic_header_id}")
+                # Check if reply_to_message has a reply_to_top_id
+                elif hasattr(reply_to, 'reply_to_top_id') and reply_to.reply_to_top_id:
+                    topic_header_id = reply_to.reply_to_top_id
+                    print(f"Found topic header via nested reply_to_top_id: {topic_header_id}")
+                # Check if reply_to_message is the topic header itself
+                elif hasattr(reply_to, 'forum_topic_created'):
+                    topic_header_id = reply_to.id
+                    print(f"Found topic header (reply_to is header): {topic_header_id}")
+            
+            # Method 3: If reference message itself is a topic header
+            if not topic_header_id and hasattr(reference_msg, 'forum_topic_created'):
+                topic_header_id = reference_msg_id
+                print(f"Reference message is the topic header: {topic_header_id}")
+            
+            # Method 4: Try to find topic header by scanning recent messages
+            if not topic_header_id:
+                print("Topic header not found via reference message, scanning for topic header...")
+                scan_count = 0
+                async for msg in userbot.get_chat_history(chat_id, limit=1000):
+                    scan_count += 1
+                    if hasattr(msg, 'forum_topic_created'):
+                        # Check if this topic matches our topic_id
+                        # Topic IDs in forum are usually sequential, try to match
+                        # Since we don't have direct topic_id in forum_topic_created,
+                        # we'll use the message ID pattern or check nearby messages
+                        if msg.id <= reference_msg_id:
+                            topic_header_id = msg.id
+                            print(f"Found potential topic header: {msg.id}")
+                            break
+                    if scan_count >= 1000:
+                        break
+                        
         except Exception as e:
             print(f"Error getting reference message: {e}")
+            import traceback
+            traceback.print_exc()
             await edit.edit(f"❌ Could not access the reference message. Error: {str(e)}")
             return
         
         if not topic_header_id:
-            await edit.edit(f"❌ Could not identify topic header for topic {topic_id}. The message link might be invalid.")
-            return
+            # Fallback: Use a different approach - scan messages and group by topic
+            await edit.edit(f"⚠️ Could not find topic header. Trying alternative method to find topic {topic_id} messages...")
+            topic_header_id = None  # We'll use topic_id directly
         
         # Get all messages from the forum topic
         messages = []
         message_count = 0
         
-        await edit.edit(f"Scanning messages in topic {topic_id} (header message: {topic_header_id})...")
+        await edit.edit(f"Scanning messages in topic {topic_id}...")
         
         async for message in userbot.get_chat_history(chat_id, limit=None):
             message_count += 1
             belongs_to_topic = False
             
-            # Primary method: Check reply_to_top_id (most reliable for forum topics)
-            if hasattr(message, 'reply_to_top_id') and message.reply_to_top_id:
+            # Method 1: Check reply_to_top_id (if available)
+            if topic_header_id and hasattr(message, 'reply_to_top_id') and message.reply_to_top_id:
                 if message.reply_to_top_id == topic_header_id:
                     belongs_to_topic = True
-                    print(f"Message {message.id} belongs to topic (reply_to_top_id: {message.reply_to_top_id})")
+                    print(f"Message {message.id} in topic (reply_to_top_id matches)")
             
-            # Secondary method: Check if message replies to the topic header
-            if not belongs_to_topic and hasattr(message, 'reply_to_message') and message.reply_to_message:
+            # Method 2: Check if message replies to topic header
+            if not belongs_to_topic and topic_header_id and hasattr(message, 'reply_to_message') and message.reply_to_message:
                 if hasattr(message.reply_to_message, 'id') and message.reply_to_message.id == topic_header_id:
                     belongs_to_topic = True
-                    print(f"Message {message.id} belongs to topic (replies to header)")
-                # Also check forum_topic attribute
-                elif hasattr(message.reply_to_message, 'forum_topic') and message.reply_to_message.forum_topic:
+                    print(f"Message {message.id} in topic (replies to header {topic_header_id})")
+                # Check nested replies
+                elif hasattr(message.reply_to_message, 'reply_to_message') and message.reply_to_message.reply_to_message:
+                    if hasattr(message.reply_to_message.reply_to_message, 'id') and message.reply_to_message.reply_to_message.id == topic_header_id:
+                        belongs_to_topic = True
+            
+            # Method 3: Check forum_topic attribute in reply_to_message
+            if not belongs_to_topic and hasattr(message, 'reply_to_message') and message.reply_to_message:
+                if hasattr(message.reply_to_message, 'forum_topic') and message.reply_to_message.forum_topic:
                     if hasattr(message.reply_to_message.forum_topic, 'id'):
                         if message.reply_to_message.forum_topic.id == topic_id:
                             belongs_to_topic = True
-                            print(f"Message {message.id} belongs to topic (forum_topic.id: {message.reply_to_message.forum_topic.id})")
+                            print(f"Message {message.id} in topic (forum_topic.id: {message.reply_to_message.forum_topic.id})")
             
-            # Include the topic header message itself
-            if not belongs_to_topic and message.id == topic_header_id:
+            # Method 4: Include topic header itself
+            if not belongs_to_topic and topic_header_id and message.id == topic_header_id:
                 belongs_to_topic = True
-                print(f"Message {message.id} is the topic header")
+                print(f"Message {message.id} is topic header")
+            
+            # Method 5: If we have the reference message, check if messages are in the same thread
+            # by checking if they have similar reply patterns
+            if not belongs_to_topic and reference_msg:
+                # Check if message and reference_msg share the same reply chain
+                if hasattr(message, 'reply_to_message') and message.reply_to_message:
+                    if hasattr(reference_msg, 'reply_to_message') and reference_msg.reply_to_message:
+                        # If both reply to messages with similar IDs (same topic thread)
+                        ref_reply_id = getattr(reference_msg.reply_to_message, 'id', None)
+                        msg_reply_id = getattr(message.reply_to_message, 'id', None)
+                        if ref_reply_id and msg_reply_id:
+                            # Messages in same topic often reply to messages close to each other
+                            if abs(ref_reply_id - msg_reply_id) < 100:
+                                # Further check: see if they're in same reply chain
+                                belongs_to_topic = True
+                                print(f"Message {message.id} in topic (similar reply chain)")
             
             if belongs_to_topic:
                 messages.append(message)
@@ -262,8 +322,7 @@ async def forward_all_command(event):
             if message_count % 100 == 0:
                 await edit.edit(f"Scanning messages... Found {len(messages)} messages in topic {topic_id} so far... (scanned {message_count} messages)")
             
-            # Stop if we've gone too far back (beyond reasonable topic size)
-            # Most topics don't have more than a few thousand messages
+            # Stop if we've scanned enough and found messages, or if we've gone too far
             if message_count > 50000:
                 print(f"Stopped scanning after {message_count} messages")
                 break
