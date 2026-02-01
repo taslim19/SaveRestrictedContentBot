@@ -45,23 +45,35 @@ async def get_msg(userbot, client, bot, sender, edit_id, msg_link, i):
             # Regular channels: t.me/c/chat_id/message_id
             # Check if it's a forum topic (has 4 parts after 'c')
             c_index = parts.index('c')
-            if len(parts) > c_index + 3:
-                # Forum topic format: chat_id is at index c_index + 1
+            is_forum_topic = len(parts) > c_index + 3
+            if is_forum_topic:
+                # Forum topic format: chat_id is at index c_index + 1, topic_id at c_index + 2
                 chat_id_str = parts[c_index + 1]
+                topic_id = int(parts[c_index + 2])
             else:
                 # Regular channel format: chat_id is at index c_index + 1
                 chat_id_str = parts[c_index + 1]
+                topic_id = None
             chat = int('-100' + str(chat_id_str))
         file = ""
         try:
+            # For forum topics, the userbot MUST have joined the group and accessed it
             # Try to access the chat first to populate Pyrogram's peer cache
             # This is especially important for forum topics and channels the bot hasn't accessed yet
             try:
                 chat_obj = await userbot.get_chat(chat)
                 print(f"Successfully accessed chat: {chat_obj.title if hasattr(chat_obj, 'title') else chat}")
+                # For forum topics, try to get forum topic info to ensure access
+                if is_forum_topic and hasattr(chat_obj, 'is_forum') and chat_obj.is_forum:
+                    print(f"Detected forum group. Topic ID: {topic_id}")
             except ValueError as ve:
                 if "Peer id invalid" in str(ve):
-                    print(f"Peer ID not in cache for chat {chat}. Userbot may need to join/access the channel first.")
+                    error_msg = f"Peer ID not in cache for chat {chat}."
+                    if is_forum_topic:
+                        error_msg += f" For forum topics, the userbot MUST join the group first and have access to topic {topic_id}."
+                    else:
+                        error_msg += " Userbot may need to join/access the channel first."
+                    print(error_msg)
                     # Try to get messages anyway - sometimes it works even if get_chat fails
                 else:
                     raise
@@ -75,8 +87,11 @@ async def get_msg(userbot, client, bot, sender, edit_id, msg_link, i):
                 msg = await userbot.get_messages(chat, msg_id)
             except ValueError as ve:
                 if "Peer id invalid" in str(ve):
-                    # Re-raise as a more specific error that we can catch later
-                    raise ValueError(f"Peer id invalid: {chat}. The userbot account needs to join/access this channel/group first.")
+                    # Provide specific guidance based on whether it's a forum topic
+                    if is_forum_topic:
+                        raise ValueError(f"Peer id invalid: {chat}. For forum topics, the userbot account MUST:\n1. Join the group\n2. Have access to view messages in the group\n3. The group must be a forum (topics enabled)\n4. Try opening the topic manually with the userbot account first")
+                    else:
+                        raise ValueError(f"Peer id invalid: {chat}. The userbot account needs to join/access this channel/group first.")
                 else:
                     raise
             if msg.media:

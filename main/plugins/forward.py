@@ -106,22 +106,69 @@ async def forward_command(event):
                 await edit.edit("Message not found. Make sure the link is correct and you have access to the message.")
                 return
             
-            await edit.edit("Forwarding message...")
+            await edit.edit("Verifying destination channel...")
             
-            # Forward the message to the channel
-            await userbot.forward_messages(channel, chat_id, msg_id)
+            # Verify and resolve the destination channel
+            dest_chat_id = channel  # Default to original value
+            try:
+                # Try to get the channel to ensure userbot has access
+                dest_chat = await userbot.get_chat(channel)
+                print(f"Destination channel: {dest_chat.title if hasattr(dest_chat, 'title') else channel}")
+                print(f"Destination chat ID: {dest_chat.id}, Type: {dest_chat.type if hasattr(dest_chat, 'type') else 'unknown'}")
+                
+                # Use the resolved chat ID for forwarding
+                dest_chat_id = dest_chat.id
+                
+                # Ensure it's a channel/group, not a private chat
+                if hasattr(dest_chat, 'type'):
+                    if dest_chat.type.name not in ['CHANNEL', 'SUPERGROUP', 'GROUP']:
+                        await edit.edit(f"❌ Destination must be a channel or group, not a {dest_chat.type.name.lower()}.")
+                        return
+            except ValueError as ve:
+                if "Peer id invalid" in str(ve):
+                    await edit.edit(f"❌ Cannot access destination channel {channel}. Make sure the userbot has joined the channel and has permission to send messages.")
+                    return
+                else:
+                    raise
+            except Exception as e:
+                print(f"Error accessing destination channel: {e}")
+                await edit.edit(f"❌ Cannot access destination channel {channel}. Error: {str(e)}")
+                return
+            
+            await edit.edit("Forwarding message to channel...")
+            
+            # Forward the message to the channel using userbot
+            # Use the resolved channel ID
+            print(f"Forwarding message {msg_id} from {chat_id} to {dest_chat_id}")
+            forwarded = await userbot.forward_messages(dest_chat_id, chat_id, msg_id)
+            
+            print(f"Forward successful. Forwarded message IDs: {forwarded}")
             
             await edit.edit(f"✅ Successfully forwarded message to {channel}!")
             
-        except (ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid):
-            await edit.edit("❌ Cannot access the source chat. Make sure you have joined the group/channel.")
+        except (ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid) as e:
+            if "source" in str(e).lower() or chat_id in str(e):
+                await edit.edit("❌ Cannot access the source chat. Make sure you have joined the group/channel.")
+            else:
+                await edit.edit(f"❌ Cannot access destination channel. Error: {str(e)}")
         except PeerIdInvalid:
-            await edit.edit("❌ Invalid channel destination. Please check the channel username or ID.")
+            await edit.edit("❌ Invalid channel destination. Please check the channel username or ID. Make sure the userbot has joined the destination channel.")
         except FloodWait as fw:
             await edit.edit(f"❌ FloodWait: Try again after {fw.x} seconds.")
+        except ValueError as ve:
+            if "Peer id invalid" in str(ve):
+                await edit.edit(f"❌ Cannot resolve peer ID. Make sure:\n1. Userbot has joined the source group/channel\n2. Userbot has joined the destination channel\n3. Userbot has permission to forward messages")
+            else:
+                await edit.edit(f"❌ Error: {str(ve)}")
         except Exception as e:
-            print(e)
-            await edit.edit(f"❌ Error forwarding message: {str(e)}")
+            print(f"Forward error: {e}")
+            error_msg = str(e)
+            if "CHAT_ADMIN_REQUIRED" in error_msg or "admin" in error_msg.lower():
+                await edit.edit("❌ Userbot needs admin rights in the destination channel to forward messages.")
+            elif "not found" in error_msg.lower() or "doesn't exist" in error_msg.lower():
+                await edit.edit("❌ Destination channel not found. Check the channel username or ID.")
+            else:
+                await edit.edit(f"❌ Error forwarding message: {error_msg}")
             
     except Exception as e:
         print(e)
