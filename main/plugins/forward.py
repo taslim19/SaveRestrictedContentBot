@@ -7,10 +7,52 @@ from main.plugins.helpers import get_link
 from telethon import events, Button
 from pyrogram.errors import FloodWait, ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid, PeerIdInvalid
 
+# Store default destination channels per user (user_id -> channel_id/username)
+default_channels = {}
+
+@Drone.on(events.NewMessage(incoming=True, from_users=AUTH, pattern='/channel'))
+async def set_channel_command(event):
+    """Set default destination channel for forwarding"""
+    if not event.is_private:
+        return
+    
+    async with Drone.conversation(event.chat_id) as conv:
+        await conv.send_message("Send me the channel:\n• Username: @channelname\n• Channel ID: -1001234567890\n• Or just the numeric ID: 1234567890\n\nThis will be set as your default destination channel.", buttons=Button.force_reply())
+        try:
+            channel_msg = await conv.get_reply()
+            channel_input = channel_msg.text.strip()
+            
+            # Handle different channel ID formats
+            if channel_input.startswith('@'):
+                channel = channel_input[1:]  # Username without @
+            elif channel_input.lstrip('-').isdigit():
+                channel = int(channel_input)
+            else:
+                channel = channel_input
+            
+            # Verify the channel exists and is accessible
+            try:
+                dest_chat = await userbot.get_chat(channel)
+                # Store the resolved channel ID
+                default_channels[event.sender_id] = dest_chat.id
+                await conv.send_message(f"✅ Default destination channel set to: {dest_chat.title if hasattr(dest_chat, 'title') else channel}\n(ID: {dest_chat.id})")
+            except Exception as e:
+                await conv.send_message(f"❌ Cannot access channel. Error: {str(e)}\nMake sure the userbot has joined the channel.")
+                return conv.cancel()
+        except Exception as e:
+            print(e)
+            await conv.send_message("Cannot wait more longer for your response!")
+            return conv.cancel()
+        
+        conv.cancel()
+
 @Drone.on(events.NewMessage(incoming=True, from_users=AUTH, pattern='/forward'))
 async def forward_command(event):
     if not event.is_private:
         return
+    
+    # Check if user has a default channel set
+    default_channel = default_channels.get(event.sender_id)
     
     async with Drone.conversation(event.chat_id) as conv:
         await conv.send_message("Send me the message link from group topic/forum that you want to forward, as a reply to this message.", buttons=Button.force_reply())
@@ -29,22 +71,45 @@ async def forward_command(event):
             await conv.send_message("Cannot wait more longer for your response!")
             return conv.cancel()
         
-        await conv.send_message("Send me the channel username or ID where you want to forward the message, as a reply to this message.", buttons=Button.force_reply())
-        try:
-            channel_msg = await conv.get_reply()
-            channel = channel_msg.text.strip()
-            # Remove @ if present
-            if channel.startswith('@'):
-                channel = channel[1:]
-            # Try to parse as integer if it's a channel ID
+        # Ask for channel only if no default is set
+        if default_channel is None:
+            await conv.send_message("Send me the channel:\n• Username: @channelname\n• Channel ID: -1001234567890\n• Or just the numeric ID: 1234567890\n\nReply with the channel username or ID. (Or use /channel to set a default)", buttons=Button.force_reply())
             try:
-                channel = int(channel)
-            except ValueError:
-                pass  # Keep as string if not a number
-        except Exception as e:
-            print(e)
-            await conv.send_message("Cannot wait more longer for your response!")
-            return conv.cancel()
+                channel_msg = await conv.get_reply()
+                channel_input = channel_msg.text.strip()
+                
+                # Handle different channel ID formats
+                if channel_input.startswith('@'):
+                    channel = channel_input[1:]  # Username without @
+                elif channel_input.lstrip('-').isdigit():
+                    channel = int(channel_input)
+                    print(f"Channel ID provided: {channel}")
+                else:
+                    channel = channel_input
+                    print(f"Channel username provided: {channel}")
+            except Exception as e:
+                print(e)
+                await conv.send_message("Cannot wait more longer for your response!")
+                return conv.cancel()
+        else:
+            # Use default channel
+            channel = default_channel
+            await conv.send_message(f"Using default destination channel (ID: {default_channel}).\nSend a different channel to override, or send 'ok' to continue...", buttons=Button.force_reply())
+            try:
+                # Wait for user to optionally override or confirm
+                reply = await conv.get_reply()
+                if reply and reply.text.strip().lower() not in ['ok', 'skip', 'continue', '']:
+                    # User wants to override
+                    channel_input = reply.text.strip()
+                    if channel_input.startswith('@'):
+                        channel = channel_input[1:]
+                    elif channel_input.lstrip('-').isdigit():
+                        channel = int(channel_input)
+                    else:
+                        channel = channel_input
+            except Exception:
+                # No reply or error - use default
+                pass
         
         conv.cancel()
     
